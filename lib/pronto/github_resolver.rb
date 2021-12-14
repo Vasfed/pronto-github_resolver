@@ -29,7 +29,7 @@ module Pronto
       client.create_pull_request_review(slug, pull_id, options)
     end
 
-    def approve_pull_request(message=nil)
+    def approve_pull_request(message="")
       client.create_pull_request_review(slug, pull_id, {
         event: 'APPROVE', body: message, accept: 'application/vnd.github.v3.diff+json'
       })
