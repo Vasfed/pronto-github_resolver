@@ -23,7 +23,7 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
     let(:patches) { repo.diff('change^') }
     let(:patch) { patches.first }
     let(:message_level) { :info }
-    let(:message) { Pronto::Message.new(patch.new_file_full_path, patch.added_lines.first, message_level, 'New message') }
+    let(:message) { Pronto::Message.new(patch.new_file_path, patch.added_lines.first, message_level, 'New message') }
     let(:messages) { [message, message] }
     let(:existing_messages) { [] }
     let(:existing_threads) { {} }
@@ -86,15 +86,8 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
             { authored: true, path: "some_other_file", position: 1, body: "Foo"},
             { authored: false, path: "some_other_file", position: 1, body: "Reply to foo"}
           ],
-          "resolved_bot_thread_id" => [
-            { authored: true, path: "some_other_file", position: 1, body: "Foo"}
-          ],
-          "active_bot_thread_id" => [
-            {
-              authored: true,
-              path: patch.new_file_full_path.basename.to_s, position: patch.added_lines.first.position, body: "New message"
-            }
-          ],
+          "resolved_bot_thread_id" => [{ authored: true, path: "some_other_file", position: 1, body: "Foo"}],
+          "active_bot_thread_id" => [{ authored: true, path: "somefile.txt", position: 1, body: "New message" }],
           "user_thread" => [ { authored: false, path: "some_other_file", position: 2, body: "Bar"} ]
         }
       end

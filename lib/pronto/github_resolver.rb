@@ -6,20 +6,6 @@ require 'pronto'
 module Pronto
 
   class Github < Client
-    # pronto messes up relative paths and does not have tests for this, patch to add repo.path.join
-    def pull_comments(sha)
-      @comment_cache["#{pull_id}/#{sha}"] ||= begin
-        client.pull_comments(slug, pull_id).map do |comment|
-          Comment.new(sha, comment.body, @repo.path.join(comment.path),
-                      comment.position || comment.original_position)
-        end
-      end
-    rescue Octokit::NotFound => e
-      @config.logger.log("Error raised and rescued: #{e}")
-      msg = "Pull request for sha #{sha} with id #{pull_id} was not found."
-      raise Pronto::Error, msg
-    end
-
     def publish_pull_request_comments(comments, event: nil)
       comments_left = comments.clone
       while comments_left.any?
@@ -166,7 +152,7 @@ module Pronto
         client.get_review_threads.each_pair do |thread_id, thread_comments|
           next unless thread_comments.all? do |comment|
             comment[:authored] &&
-              (actual_comments[[repo.path.join(comment[:path]), comment[:position]]] || []).none? { |actual_comment|
+              (actual_comments[[comment[:path], comment[:position]]] || []).none? { |actual_comment|
                 comment[:body].include?(actual_comment.body)
               }
           end
