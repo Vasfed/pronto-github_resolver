@@ -28,17 +28,12 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
     let(:existing_messages) { [] }
     let(:existing_threads) { {} }
     let(:existing_reviews) { [] }
-    let(:bot_user) do
-      JSON.parse <<~JSON, object_class: OpenStruct
-        { "login": "github-actions[bot]", "id": 4189, "node_id": "MDE6Qm90NDE4OQ==", "type": "Bot" }
-      JSON
-    end
 
     before do
       ENV['PRONTO_PULL_REQUEST_ID'] = '10'
+      ENV['PRONTO_GITHUB_BOT_ID'] = '4189'
       allow_any_instance_of(Octokit::Client).to receive(:pull_comments).and_return(existing_messages)
       allow_any_instance_of(Octokit::Client).to receive(:pull_request_reviews).and_return(existing_reviews)
-      allow_any_instance_of(Octokit::Client).to receive(:user).and_return(bot_user)
       allow_any_instance_of(Pronto::Github).to receive(:get_review_threads).and_return(existing_threads)
     end
 
@@ -88,19 +83,19 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
       let(:existing_threads) do
         {
           "bot_thread_with_user" => [
-            { author_id: bot_user.node_id, path: "some_other_file", position: 1, body: "Foo"},
-            { author_id: "other_user_id", path: "some_other_file", position: 1, body: "Reply to foo"}
+            { authored: true, path: "some_other_file", position: 1, body: "Foo"},
+            { authored: false, path: "some_other_file", position: 1, body: "Reply to foo"}
           ],
           "resolved_bot_thread_id" => [
-            { author_id: bot_user.node_id, path: "some_other_file", position: 1, body: "Foo"}
+            { authored: true, path: "some_other_file", position: 1, body: "Foo"}
           ],
           "active_bot_thread_id" => [
             {
-              author_id: bot_user.node_id,
+              authored: true,
               path: patch.new_file_full_path.basename.to_s, position: patch.added_lines.first.position, body: "New message"
             }
           ],
-          "user_thread" => [ { author_id: "other_user_id", path: "some_other_file", position: 2, body: "Bar"} ]
+          "user_thread" => [ { authored: false, path: "some_other_file", position: 2, body: "Bar"} ]
         }
       end
 

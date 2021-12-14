@@ -53,14 +53,6 @@ module Pronto
       client.pull_request_reviews(slug, pull_id)
     end
 
-    def bot_user_id
-      bot_user.id
-    end
-
-    def bot_user
-      @bot_user ||= client.user
-    end
-
     def get_review_threads
       owner, repo_name = (slug || "").split('/')
       res = client.post :graphql, { query: <<~GQL }.to_json
@@ -74,7 +66,6 @@ module Pronto
                         id
                         comments(last: 10) {
                             nodes {
-                                author { ... on Node { id } }
                                 viewerDidAuthor
                                 path position body
                             }
@@ -98,7 +89,7 @@ module Pronto
           node.id,
           node.comments.nodes.map{ |comment|
             {
-              author_id: comment.author.id,
+              authored: comment.viewerDidAuthor,
               path: comment.path, position: comment.position, body: comment.body
             }
           }
@@ -137,9 +128,8 @@ module Pronto
         if comments.none?
           bot_reviews = client.existing_pull_request_reviews.select { |review| review.user.type == 'Bot' }
           if bot_reviews.any?
-            bot_id = client.bot_user_id
             current_bot_review_status = bot_reviews.inject(nil) do |prev_status, review|
-              next prev_status unless review.user.id == bot_id
+              next prev_status unless review_by_this_bot?(review)
 
               case review.state
               when 'CHANGES_REQUESTED' then review.state
@@ -161,6 +151,10 @@ module Pronto
         "#{additions.count} Pronto messages posted to #{pretty_name}"
       end
 
+      def review_by_this_bot?(review)
+        ENV['PRONTO_GITHUB_BOT_ID'] && review.user.id == ENV['PRONTO_GITHUB_BOT_ID'].to_i
+      end
+
       def submit_comments(client, comments, event: nil)
         client.publish_pull_request_comments(comments, event: event)
       rescue Octokit::UnprocessableEntity, HTTParty::Error => e
@@ -169,10 +163,9 @@ module Pronto
 
       def resolve_old_messages(client, repo, actual_comments)
         thread_ids_to_resolve = []
-        bot_node_id = client.bot_user.node_id
         client.get_review_threads.each_pair do |thread_id, thread_comments|
           next unless thread_comments.all? do |comment|
-            comment[:author_id] == bot_node_id &&
+            comment[:authored] &&
               (actual_comments[[repo.path.join(comment[:path]), comment[:position]]] || []).none? { |actual_comment|
                 comment[:body].include?(actual_comment.body)
               }

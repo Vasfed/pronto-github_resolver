@@ -22,7 +22,9 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+- When any of pronto runners emits message with level `:error` or `:fatal` - generated PR review will have resolution 'REQUEST_CHANGES', and default in other cases.
+- On each run comment threads where message is no longer generated will be marked as resolved.
+- Set ENV['PRONTO_GITHUB_BOT_ID'] to github id of your bot user. This enables posting PR 'APPROVE' review by bot after all messages are resolved.
 
 ## Development
 
