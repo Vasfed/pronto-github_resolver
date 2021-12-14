@@ -9,7 +9,14 @@ end
 RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
   let(:formatter) { described_class.new }
 
-  let(:repo) { Pronto::Git::Repository.new('spec/fixtures/test.git') }
+  let(:repo) { Pronto::Git::Repository.new('test.git') }
+
+  around do |spec|
+    # change to repository workdir (for paths to match)
+    Dir.chdir('spec/fixtures') do
+      spec.run
+    end
+  end
 
   describe '#format' do
     subject { formatter.format(messages, repo, patches) }
@@ -19,6 +26,7 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
     let(:message) { Pronto::Message.new(patch.new_file_full_path, patch.added_lines.first, message_level, 'New message') }
     let(:messages) { [message, message] }
     let(:existing_messages) { [] }
+    let(:existing_threads) { {} }
     let(:existing_reviews) { [] }
     let(:bot_user) do
       JSON.parse <<~JSON, object_class: OpenStruct
@@ -31,10 +39,11 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
       allow_any_instance_of(Octokit::Client).to receive(:pull_comments).and_return(existing_messages)
       allow_any_instance_of(Octokit::Client).to receive(:pull_request_reviews).and_return(existing_reviews)
       allow_any_instance_of(Octokit::Client).to receive(:user).and_return(bot_user)
+      allow_any_instance_of(Pronto::Github).to receive(:get_review_threads).and_return(existing_threads)
     end
 
-    specify do
-      expect_any_instance_of(Octokit::Client).to receive(:create_pull_request_review).once.with(anything, 10,
+    it "adds comment" do
+      expect_any_instance_of(Octokit::Client).to receive(:create_pull_request_review).once.with("test/test", 10,
         a_hash_including(
           event: 'COMMENT',
           comments: [ a_hash_including(body: 'New message') ]
@@ -47,8 +56,8 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
     context "when message is error" do
       let(:message_level) { :error }
 
-      it do
-        expect_any_instance_of(Octokit::Client).to receive(:create_pull_request_review).once.with(anything, 10,
+      it "adds comment with REQUEST_CHANGES" do
+        expect_any_instance_of(Octokit::Client).to receive(:create_pull_request_review).once.with("test/test", 10,
           a_hash_including(event: 'REQUEST_CHANGES', comments: [ a_hash_including(body: 'New message') ])
         )
 
@@ -56,8 +65,7 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
       end
     end
 
-    context "when messages resolved" do
-      let(:messages) { [] }
+    context "when previous comments are fixed" do
       let(:existing_messages) do
         JSON.parse <<~JSON, object_class: OpenStruct
           [
@@ -66,34 +74,39 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
               "id": 100123,
               "node_id": "MDI0OlB1bGxSZXF1ZXN0UmV2aWV3Q29tbWVudDEw",
               "diff_hunk": "@@ -16,33 +16,40 @@ public class Connection : IConnection...",
-              "path": "file1.txt",
+              "path": "somefile.txt",
               "position": 1,
               "original_position": 4,
               "commit_id": "6dcb09b5b57875f334f61aebed695e2e4193db5e",
               "original_commit_id": "9c48853fa3dc5c1c3d6f1f1cd1f2743e72652840",
               "user": { "login": "github-actions[bot]", "id": 4189, "node_id": "MDE6Qm90NDE4OQ==", "type": "Bot" },
-              "body": "Old warning",
-              "created_at": "2011-04-14T16:00:49Z",
-              "updated_at": "2011-04-14T16:00:49Z"
+              "body": "New message"
             }
           ]
         JSON
       end
+      let(:existing_threads) do
+        {
+          "bot_thread_with_user" => [
+            { author_id: bot_user.node_id, path: "some_other_file", position: 1, body: "Foo"},
+            { author_id: "other_user_id", path: "some_other_file", position: 1, body: "Reply to foo"}
+          ],
+          "resolved_bot_thread_id" => [
+            { author_id: bot_user.node_id, path: "some_other_file", position: 1, body: "Foo"}
+          ],
+          "active_bot_thread_id" => [
+            {
+              author_id: bot_user.node_id,
+              path: patch.new_file_full_path.basename.to_s, position: patch.added_lines.first.position, body: "New message"
+            }
+          ],
+          "user_thread" => [ { author_id: "other_user_id", path: "some_other_file", position: 2, body: "Bar"} ]
+        }
+      end
 
-      it "resolves old messages" do
-        skip "not implemented yet"
-
-        expect(existing_messages).not_to be_empty
+      it "resolves these" do
         expect_any_instance_of(Octokit::Client).not_to receive(:create_pull_request_review)
-
-        expect_any_instance_of(Octokit::Client).to receive(:update_pull_request_comment).with(
-          anything, # repo
-          100123, # comment_id
-          ":white_check_mark: Old warning" # body
-        ).once
-
-        # TODO: use GraphQL mutation resolveReviewThread with node_id from comment
-        # other option = delete comments (option to do so)
+        allow_any_instance_of(Pronto::Github).to receive(:resolve_review_threads).with(["resolved_bot_thread_id"])
         subject
       end
     end
@@ -116,7 +129,7 @@ RSpec.describe Pronto::Formatter::GithubPullRequestReviewFormatter do
       end
 
       it "approves PR" do
-        expect_any_instance_of(Octokit::Client).to receive(:create_pull_request_review).once.with(anything, 10,
+        expect_any_instance_of(Octokit::Client).to receive(:create_pull_request_review).once.with("test/test", 10,
           a_hash_including(
             event: 'APPROVE', # DISMISS ?
             # body: "1 warning fixed, bots are happy"

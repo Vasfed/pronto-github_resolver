@@ -6,6 +6,20 @@ require 'pronto'
 module Pronto
 
   class Github < Client
+    # pronto messes up relative paths and does not have tests for this, patch to add repo.path.join
+    def pull_comments(sha)
+      @comment_cache["#{pull_id}/#{sha}"] ||= begin
+        client.pull_comments(slug, pull_id).map do |comment|
+          Comment.new(sha, comment.body, @repo.path.join(comment.path),
+                      comment.position || comment.original_position)
+        end
+      end
+    rescue Octokit::NotFound => e
+      @config.logger.log("Error raised and rescued: #{e}")
+      msg = "Pull request for sha #{sha} with id #{pull_id} was not found."
+      raise Pronto::Error, msg
+    end
+
     def publish_pull_request_comments(comments, event: nil)
       comments_left = comments.clone
       while comments_left.any?
@@ -40,7 +54,72 @@ module Pronto
     end
 
     def bot_user_id
-      client.user.id
+      bot_user.id
+    end
+
+    def bot_user
+      @bot_user ||= client.user
+    end
+
+    def get_review_threads
+      owner, repo_name = (slug || "").split('/')
+      res = client.post :graphql, { query: <<~GQL }.to_json
+        query getUserId {
+          repository(owner: "#{owner}", name: "#{repo_name}") {
+            pullRequest: issueOrPullRequest(number: #{pull_id}) {
+              ... on PullRequest {
+                reviewThreads(last:100) {
+                    totalCount
+                    nodes {
+                        id
+                        comments(last: 10) {
+                            nodes {
+                                author { ... on Node { id } }
+                                viewerDidAuthor
+                                path position body
+                            }
+                        }
+                    }
+                }
+              }
+            }
+          }
+        }
+      GQL
+
+      if res.errors || !res.data
+        # ex: [{:message=>"Parse error on \"11\" (INT) at [1, 22]", :locations=>[{:line=>1, :column=>22}]}]
+        # TODO: handle errors
+        return []
+      end
+
+      res.data.repository.pullRequest.reviewThreads.nodes.to_h { |node|
+        [
+          node.id,
+          node.comments.nodes.map{ |comment|
+            {
+              author_id: comment.author.id,
+              path: comment.path, position: comment.position, body: comment.body
+            }
+          }
+        ]
+      }
+    end
+
+    def resolve_review_threads(node_ids)
+      return unless node_ids.any?
+
+      owner, repo_name = (slug || "").split('/')
+      query = <<~GQL
+        mutation {
+          #{
+            node_ids.each_with_index.map {|id, index|
+              "q#{index}: resolveReviewThread(input: { threadId: \"#{id}\" }){ thread { id } } "
+            }.join("\n")
+          }
+        }
+      GQL
+      client.post :graphql, { query: query }.to_json
     end
   end
 
@@ -51,6 +130,9 @@ module Pronto
         existing = existing_comments(messages, client, repo)
         comments = new_comments(messages, patches)
         additions = remove_duplicate_comments(existing, comments)
+
+        # TODO: we can reuse some threads from graphql for existing messages detection (but there's no pagination)
+        resolve_old_messages(client, repo, comments)
 
         if comments.none?
           bot_reviews = client.existing_pull_request_reviews.select { |review| review.user.type == 'Bot' }
@@ -83,6 +165,21 @@ module Pronto
         client.publish_pull_request_comments(comments, event: event)
       rescue Octokit::UnprocessableEntity, HTTParty::Error => e
         $stderr.puts "Failed to post: #{e.message}"
+      end
+
+      def resolve_old_messages(client, repo, actual_comments)
+        thread_ids_to_resolve = []
+        bot_node_id = client.bot_user.node_id
+        client.get_review_threads.each_pair do |thread_id, thread_comments|
+          next unless thread_comments.all? do |comment|
+            comment[:author_id] == bot_node_id &&
+              (actual_comments[[repo.path.join(comment[:path]), comment[:position]]] || []).none? { |actual_comment|
+                comment[:body].include?(actual_comment.body)
+              }
+          end
+          thread_ids_to_resolve << thread_id
+        end
+        client.resolve_review_threads(thread_ids_to_resolve)
       end
     end
 
