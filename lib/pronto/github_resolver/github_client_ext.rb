@@ -38,8 +38,7 @@ module Pronto
     GET_REVIEW_THREADS_QUERY = <<~GQL
       query getReviewThreadIds($owner: String!, $name: String!, $pull_num: Int!) {
         repository(owner: $owner, name: $name) {
-          pullRequest: issueOrPullRequest(number: $pull_num) {
-            ... on PullRequest {
+          pullRequest(number: $pull_num){
               reviewThreads(last:100) {
                   totalCount
                   nodes {
@@ -52,7 +51,6 @@ module Pronto
                       }
                   }
               }
-            }
           }
         }
       }
